@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sing-box Inbound Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Custom styles for better UI experience */
+    .form-group label {
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    .error-message {
+      background-color: #ef4444; /* Red-500 */
+      color: white;
+      padding: 0.75rem 1rem;
+      border-radius: 0.375rem; /* rounded-md */
+      margin-bottom: 1.5rem; /* mb-6 */
+      display: none; /* Hidden by default */
+    }
+  </style>
+</head>
+<body style="background-color: #330033;" class="text-white min-h-screen p-6">
+  <div class="max-w-5xl mx-auto">
+    <h1 class="text-3xl font-bold mb-6">Sing-box Inbound Generator</h1>
+
+    <div class="mb-4">
+      <label for="protocol" class="block text-sm font-medium text-gray-300">Choose Protocol</label>
+      <select id="protocol" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white">
+        <option value="">-- Select --</option>
+        <option value="vless">VLESS</option>
+        <option value="trojan">Trojan</option>
+        <option value="shadowsocks-2022">Shadowsocks 2022</option>
+        <option value="shadowsocks-2023">Shadowsocks 2023</option>
+        <option value="hysteria2">Hysteria 2</option>
+        <option value="wireguard">WireGuard</option>
+        <option value="http">HTTP</option>
+      </select>
+    </div>
+
+    <div id="error-display" class="error-message"></div>
+
+    <form id="config-form" class="space-y-4"></form>
+
+    <div class="mt-6">
+      <h2 class="text-xl font-semibold mb-2">Generated Config</h2>
+      <textarea id="output" class="w-full h-64 bg-gray-800 text-green-300 p-4 rounded" readonly></textarea>
+      <div class="mt-2 flex gap-4">
+        <button id="copy-btn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Copy</button>
+        <button id="download-btn" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded">Download</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('config-form');
+    const output = document.getElementById('output');
+    const protocolSelector = document.getElementById('protocol');
+    const errorDisplay = document.getElementById('error-display');
+
+    const SHADOWSOCKS_METHODS = [
+      "2022-blake3-aes-128-gcm",
+      "2022-blake3-aes-256-gcm",
+      "2022-blake3-chacha20-poly1305"
+    ];
+
+    const PROTOCOLS_WITH_TLS = ['vless', 'trojan', 'hysteria2']; // Protocols that can use TLS
+    const PROTOCOLS_WITH_TRANSPORT = ['vless', 'trojan']; // Protocols that commonly use transport (e.g., WS) - shadowsocks removed here
+
+    // --- Validation Functions ---
+    function isValidUUID(uuid) {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      return uuidRegex.test(uuid);
+    }
+
+    function isValidBase64Key(key, expectedLengthBytes) {
+      try {
+        const decoded = atob(key);
+        return decoded.length === expectedLengthBytes;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function isValidIpCidr(ipCidr) {
+        // Simple regex for IPv4 or IPv6 with optional CIDR
+        const ipCidrRegex = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d{1,2})?)|(?:[0-9a-fA-F:]+:[0-9a-fA-F]{1,4}(?:\/\d{1,3})?)$/;
+        return ipCidrRegex.test(ipCidr);
+    }
+
+    // --- Error Display Function ---
+    let errorTimeout;
+    function displayError(message) {
+      errorDisplay.textContent = message;
+      errorDisplay.style.display = 'block';
+      clearTimeout(errorTimeout);
+      errorTimeout = setTimeout(() => {
+        errorDisplay.style.display = 'none';
+      }, 5000); // Hide after 5 seconds
+    }
+
+    function clearError() {
+      errorDisplay.textContent = '';
+      errorDisplay.style.display = 'none';
+      clearTimeout(errorTimeout);
+    }
+
+    protocolSelector.addEventListener('change', () => {
+      const protocol = protocolSelector.value;
+      form.innerHTML = ''; // Clear previous form fields
+      clearError(); // Clear any previous errors
+      if (!protocol) return;
+      buildForm(protocol);
+    });
+
+    function buildForm(protocol) {
+      const commonFields = `
+        <div class="form-group">
+          <label class="block text-sm font-medium text-gray-300">Tag
+            <input type="text" name="tag" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="${protocol.toUpperCase()}-IN" required>
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="block text-sm font-medium text-gray-300">Listen Port
+            <input type="number" name="listen_port" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="443" required>
+          </label>
+        </div>
+      `;
+      let extraFields = '';
+      let tlsFields = '';
+      let transportFields = '';
+      let sniffingFields = ''; // New: Sniffing fields
+
+      switch (protocol) {
+        case 'vless':
+          extraFields = `
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">UUID
+                <input type="text" name="uuid" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="${crypto.randomUUID()}" required>
+              </label>
+            </div>
+            <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Flow (optional, e.g., xtls-rprx-vision)
+                  <select name="vless_flow" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white">
+                    <option value="">None</option>
+                    <option value="xtls-rprx-vision">xtls-rprx-vision</option>
+                    <option value="xtls-rprx-direct">xtls-rprx-direct</option>
+                  </select>
+                </label>
+            </div>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Decryption
+                <select name="vless_decryption" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white">
+                  <option value="none">none</option>
+                  <option value="aes-128-gcm">aes-128-gcm</option>
+                </select>
+              </label>
+            </div>
+          `;
+          break;
+        case 'trojan':
+          extraFields = `
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Password
+                <input type="text" name="password" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="${generateRandomPassword(16)}" required>
+              </label>
+            </div>
+          `;
+          break;
+        case 'shadowsocks-2022':
+        case 'shadowsocks-2023':
+          extraFields = `
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Method
+                <select name="method" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" required>
+                  ${SHADOWSOCKS_METHODS.map(m => `<option value="${m}">${m}</option>`).join('')}
+                </select>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Password
+                <input type="text" name="password" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="${generateSs2022Key()}" required>
+              </label>
+            </div>
+             <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Network (e.g., tcp,udp)
+                  <input type="text" name="network" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="tcp,udp">
+                </label>
+            </div>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">IV Check (true/false)
+                <input type="checkbox" name="iv_check" class="mt-1 ml-2" checked>
+              </label>
+            </div>
+          `;
+          break;
+        case 'hysteria2':
+          extraFields = `
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Password
+                <input type="text" name="password" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="${generateRandomPassword(16)}" required>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Obfuscation Password (optional)
+                <input type="text" name="obfs_password" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white">
+              </label>
+            </div>
+            <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Up MBPS (optional)
+                  <input type="number" name="up_mbps" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white">
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Down MBPS (optional)
+                  <input type="number" name="down_mbps" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white">
+                </label>
+            </div>
+          `;
+          break;
+        case 'wireguard':
+          extraFields = `
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Private Key (generate one, e.g., wg genkey)
+                <input type="text" name="private_key" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" required>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Listen IP (e.g., 10.0.0.1/24)
+                <input type="text" name="listen_ip" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="10.0.0.1/24" required>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Peer Public Key (optional, if adding a client)
+                <input type="text" name="peer_public_key" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white">
+              </label>
+            </div>
+             <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Peer Allowed IPs (e.g., 0.0.0.0/0)
+                <input type="text" name="peer_allowed_ips" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="0.0.0.0/0">
+              </label>
+            </div>
+          `;
+          break;
+        case 'http':
+          extraFields = `
+             <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Users (username:password, comma-separated)
+                  <input type="text" name="http_users" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" placeholder="user1:pass1,user2:pass2">
+                </label>
+            </div>
+          `;
+          break;
+      }
+
+      // Transport settings for protocols that commonly use them
+      if (PROTOCOLS_WITH_TRANSPORT.includes(protocol)) {
+        transportFields = `
+          <h3 class="text-md font-semibold mb-2 mt-6">Transport Settings</h3>
+          <div class="form-group">
+            <label class="block text-sm font-medium text-gray-300">Transport Type
+              <select name="transport_type" id="transport-type" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white">
+                <option value="tcp">TCP (Default)</option>
+                <option value="ws">WebSocket</option>
+                </select>
+            </label>
+          </div>
+          <div id="ws-settings" class="pl-4 border-l-2 border-gray-700 hidden">
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">WebSocket Path
+                <input type="text" name="ws_path" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="/ws" required>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">WebSocket Headers (JSON format, optional)
+                <textarea name="ws_headers" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" rows="3" placeholder='{"Host": "example.com"}'></textarea>
+              </label>
+            </div>
+          </div>
+        `;
+      }
+
+
+      // Add TLS option for supported protocols
+      if (PROTOCOLS_WITH_TLS.includes(protocol)) {
+        tlsFields = `
+          <h3 class="text-md font-semibold mb-2 mt-6">TLS Settings</h3>
+          <div class="form-group">
+            <label class="block text-sm font-medium text-gray-300">Enable TLS
+              <input type="checkbox" name="enable_tls" id="enable-tls" class="mt-1 ml-2">
+            </label>
+          </div>
+          <div id="tls-settings" class="pl-4 border-l-2 border-gray-700 hidden">
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Server Name (SNI)
+                <input type="text" name="tls_server_name" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" placeholder="e.g., example.com">
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Certificate File Path
+                <input type="text" name="cert_file" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="/etc/sing-box/cert.pem" required>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Key File Path
+                <input type="text" name="key_file" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" value="/etc/sing-box/key.pem" required>
+              </label>
+            </div>
+            <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">ALPN (select all that apply) </label>
+                <div class="flex flex-wrap gap-x-4">
+                  <label class="inline-flex items-center">
+                    <input type="checkbox" name="tls_alpn" value="h2" class="form-checkbox">
+                    <span class="ml-2 text-sm text-gray-300">h2</span>
+                  </label>
+                  <label class="inline-flex items-center">
+                    <input type="checkbox" name="tls_alpn" value="http/1.1" class="form-checkbox">
+                    <span class="ml-2 text-sm text-gray-300">http/1.1</span>
+                  </label>
+                  <label class="inline-flex items-center">
+                    <input type="checkbox" name="tls_alpn" value="h3" class="form-checkbox">
+                    <span class="ml-2 text-sm text-gray-300">h3 (future)</span>
+                  </label>
+                </div>
+            </div>
+             <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Disable TLS 1.3
+                  <input type="checkbox" name="tls_disable_tls13" class="mt-1 ml-2">
+                  <span class="text-xs text-gray-400">(Disables TLS 1.3 protocol version)</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Reject Unknown SNI
+                  <input type="checkbox" name="tls_reject_unknown_sni" class="mt-1 ml-2" checked>
+                </label>
+            </div>
+            
+            <h4 class="text-md font-semibold mb-2 mt-4">Reality Settings</h4>
+            <div class="form-group">
+              <label class="block text-sm font-medium text-gray-300">Enable Reality
+                <input type="checkbox" name="enable_reality" id="enable-reality" class="mt-1 ml-2">
+              </label>
+            </div>
+            <div id="reality-settings" class="pl-4 border-l-2 border-gray-700 hidden">
+              <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Destination (e.g., target.domain:443)
+                  <input type="text" name="reality_dest" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" placeholder="www.example.com:443">
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Server Names (comma-separated)
+                  <input type="text" name="reality_server_names" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" placeholder="example.com,test.com">
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Private Key
+                  <input type="text" name="reality_private_key" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" placeholder="Your Reality private key">
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="block text-sm font-medium text-gray-300">Short ID (comma-separated)
+                  <input type="text" name="reality_short_id" class="mt-1 block w-full bg-gray-800 border border-gray-600 rounded-md p-2 text-white" placeholder="e.g., 01,AB">
+                </label>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // Sniffing Settings
+      sniffingFields = `
+        <h3 class="text-md font-semibold mb-2 mt-6">Sniffing Settings</h3>
+        <div class="form-group">
+          <label class="block text-sm font-medium text-gray-300">Enabled
+            <input type="checkbox" name="sniffing_enabled" id="sniffing-enabled" class="mt-1 ml-2" checked>
+          </label>
+        </div>
+        <div id="sniffing-options" class="pl-4 border-l-2 border-gray-700">
+          <div class="form-group">
+            <label class="block text-sm font-medium text-gray-300">Dest Override</label>
+            <div class="flex flex-wrap gap-x-4">
+              <label class="inline-flex items-center">
+                <input type="checkbox" name="dest_override" value="http" class="form-checkbox" checked>
+                <span class="ml-2 text-sm text-gray-300">HTTP</span>
+              </label>
+              <label class="inline-flex items-center">
+                <input type="checkbox" name="dest_override" value="tls" class="form-checkbox" checked>
+                <span class="ml-2 text-sm text-gray-300">TLS</span>
+              </label>
+              <label class="inline-flex items-center">
+                <input type="checkbox" name="dest_override" value="quic" class="form-checkbox" checked>
+                <span class="ml-2 text-sm text-gray-300">QUIC</span>
+                  </label>
+              <label class="inline-flex items-center">
+                <input type="checkbox" name="dest_override" value="fakedns" class="form-checkbox" checked>
+                <span class="ml-2 text-sm text-gray-300">FakeDNS</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="inline-flex items-center">
+              <input type="checkbox" name="metadata_only" class="form-checkbox">
+              <span class="ml-2 text-sm text-gray-300">Metadata Only</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="inline-flex items-center">
+              <input type="checkbox" name="route_only" class="form-checkbox">
+              <span class="ml-2 text-sm text-gray-300">Route Only</span>
+            </label>
+          </div>
+        </div>
+      `;
+
+
+      form.innerHTML = commonFields + extraFields + transportFields + tlsFields + sniffingFields + `<button type="submit" class="bg-indigo-600 hover:bg-indigo-700 mt-4 px-4 py-2 rounded">Generate</button>`;
+
+      // Add event listener for TLS checkbox
+      const enableTlsCheckbox = document.getElementById('enable-tls');
+      if (enableTlsCheckbox) {
+        const tlsSettingsDiv = document.getElementById('tls-settings');
+        enableTlsCheckbox.addEventListener('change', () => {
+          tlsSettingsDiv.classList.toggle('hidden', !enableTlsCheckbox.checked);
+          tlsSettingsDiv.querySelectorAll('input[type="text"][required]').forEach(input => {
+            input.required = enableTlsCheckbox.checked;
+          });
+          // Also hide/show reality settings if TLS is disabled
+          const enableRealityCheckbox = document.getElementById('enable-reality');
+          const realitySettingsDiv = document.getElementById('reality-settings');
+          if (!enableTlsCheckbox.checked) {
+              enableRealityCheckbox.checked = false; // Uncheck reality if TLS is disabled
+              realitySettingsDiv.classList.add('hidden'); // Hide reality settings
+          }
+        });
+        tlsSettingsDiv.classList.toggle('hidden', !enableTlsCheckbox.checked);
+        tlsSettingsDiv.querySelectorAll('input[type="text"][required]').forEach(input => {
+          input.required = enableTlsCheckbox.checked;
+        });
+      }
+
+      // Add event listener for Reality checkbox
+      const enableRealityCheckbox = document.getElementById('enable-reality');
+      if (enableRealityCheckbox) {
+        const realitySettingsDiv = document.getElementById('reality-settings');
+        enableRealityCheckbox.addEventListener('change', () => {
+          const isReality = enableRealityCheckbox.checked;
+          realitySettingsDiv.classList.toggle('hidden', !isReality);
+
+          const transportTypeSelector = document.getElementById('transport-type');
+          const wsSettingsDiv = document.getElementById('ws-settings');
+
+          if (isReality) {
+              // If Reality is enabled, force transport type to TCP and hide WebSocket settings
+              if (transportTypeSelector) {
+                  transportTypeSelector.value = 'tcp';
+                  transportTypeSelector.dispatchEvent(new Event('change')); // Trigger change event
+              }
+              // Also ensure WS settings are hidden and fields are not required, regardless of transport type's initial state
+              if (wsSettingsDiv) {
+                  wsSettingsDiv.classList.add('hidden');
+                  wsSettingsDiv.querySelectorAll('input[type="text"][required]').forEach(input => {
+                      input.required = false;
+                  });
+              }
+          } else {
+              // If Reality is disabled, restore WS visibility based on current transport type selection
+              if (transportTypeSelector && transportTypeSelector.value === 'ws') {
+                  if (wsSettingsDiv) {
+                      wsSettingsDiv.classList.remove('hidden');
+                      wsSettingsDiv.querySelectorAll('input[type="text"][required]').forEach(input => {
+                          input.required = true;
+                      });
+                  }
+              }
+          }
+        });
+
+        realitySettingsDiv.classList.toggle('hidden', !enableRealityCheckbox.checked); // Initial state
+
+        // Initial check for WS visibility if Reality is initially checked on page load
+        const wsSettingsDivInitial = document.getElementById('ws-settings');
+        const transportTypeSelectorInitial = document.getElementById('transport-type');
+        if (enableRealityCheckbox.checked) { // If Reality is initially checked
+            if (transportTypeSelectorInitial) {
+                transportTypeSelectorInitial.value = 'tcp'; // Set transport to TCP
+                transportTypeSelectorInitial.dispatchEvent(new Event('change')); // Trigger change
+            }
+            if (wsSettingsDivInitial) {
+                wsSettingsDivInitial.classList.add('hidden'); // Ensure WS is hidden
+                wsSettingsDivInitial.querySelectorAll('input[type="text"][required]').forEach(input => {
+                    input.required = false;
+                });
+            }
+        }
+      }
+
+
+      // Add event listener for Transport type selector
+      const transportTypeSelector = document.getElementById('transport-type');
+      if (transportTypeSelector) {
+        const wsSettingsDiv = document.getElementById('ws-settings');
+        transportTypeSelector.addEventListener('change', () => {
+          wsSettingsDiv.classList.toggle('hidden', transportTypeSelector.value !== 'ws');
+          wsSettingsDiv.querySelectorAll('input[type="text"][required]').forEach(input => {
+            input.required = transportTypeSelector.value === 'ws';
+          });
+          // If transport changes to WS, and Reality is enabled, hide WS settings
+          const enableRealityCheckbox = document.getElementById('enable-reality');
+          if (enableRealityCheckbox && enableRealityCheckbox.checked && transportTypeSelector.value === 'ws') {
+              wsSettingsDiv.classList.add('hidden');
+              wsSettingsDiv.querySelectorAll('input[type="text"][required]').forEach(input => {
+                  input.required = false;
+              });
+          }
+        });
+        wsSettingsDiv.classList.toggle('hidden', transportTypeSelector.value !== 'ws');
+        wsSettingsDiv.querySelectorAll('input[type="text"][required]').forEach(input => {
+          input.required = transportTypeSelector.value === 'ws';
+        });
+      }
+
+      // Add event listener for Sniffing Enabled checkbox
+      const sniffingEnabledCheckbox = document.getElementById('sniffing-enabled');
+      if (sniffingEnabledCheckbox) {
+        const sniffingOptionsDiv = document.getElementById('sniffing-options');
+        sniffingEnabledCheckbox.addEventListener('change', () => {
+          sniffingOptionsDiv.classList.toggle('hidden', !sniffingEnabledCheckbox.checked);
+        });
+        sniffingOptionsDiv.classList.toggle('hidden', !sniffingEnabledCheckbox.checked); // Initial state
+      }
+    }
+
+    // Helper function to generate a random password
+    function generateRandomPassword(length) {
+        const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+";
+        let password = "";
+        for (let i = 0; i < length; i++) {
+            password += charset.charAt(Math.floor(Math.random() * charset.length));
+        }
+        return password;
+    }
+
+    // Helper function to generate a random SS2022 key (placeholder, actual key derivation is more complex)
+    function generateSs2022Key() {
+        const bytes = new Uint8Array(32); // 32 bytes for a strong key
+        crypto.getRandomValues(bytes);
+        return btoa(String.fromCharCode(...bytes));
+    }
+
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      clearError(); // Clear previous errors on new submission
+
+      const formData = new FormData(form);
+      const data = Object.fromEntries(formData.entries());
+      const protocol = protocolSelector.value;
+      const inbound = {
+        type: protocol,
+        tag: data.tag,
+        listen: '0.0.0.0', // Default listen to all interfaces for simplicity
+        listen_port: parseInt(data.listen_port),
+      };
+
+      // Protocol-specific settings that use 'settings' object
+      const protocolsUsingSettings = ['vless', 'trojan', 'shadowsocks-2022', 'shadowsocks-2023', 'hysteria2', 'http'];
+      if (protocolsUsingSettings.includes(protocol)) {
+          inbound.settings = {};
+      }
+
+      // TLS settings
+      const enableTls = data.enable_tls === 'on';
+      const enableReality = data.enable_reality === 'on';
+
+      if (PROTOCOLS_WITH_TLS.includes(protocol) && enableTls) {
+        inbound.tls = {};
+        if (!enableReality) { // Only set enabled: true if Reality is NOT enabled
+            inbound.tls.enabled = true;
+        }
+
+        if (data.tls_server_name) inbound.tls.server_name = data.tls_server_name;
+        if (data.cert_file && data.key_file) {
+            inbound.tls.certificates = [
+                {
+                    certificate_file: data.cert_file,
+                    key_file: data.key_file
+                }
+            ];
+        }
+        const selectedAlpn = formData.getAll('tls_alpn');
+        if (selectedAlpn.length > 0) inbound.tls.alpn = selectedAlpn;
+        if (data.tls_disable_tls13 === 'on') inbound.tls.disable_tls13 = true;
+        if (data.tls_reject_unknown_sni === 'on') inbound.tls.reject_unknown_sni = true;
+
+        // Reality settings
+        if (enableReality) {
+            inbound.tls.reality = {
+                enabled: true,
+                show: false, // Defaulting show to false as it's not a common user config
+                xver: 0 // Defaulting xver to 0
+            };
+            if (data.reality_dest) inbound.tls.reality.dest = data.reality_dest;
+            if (data.reality_server_names) inbound.tls.reality.server_names = data.reality_server_names.split(',').map(s => s.trim());
+            
+            // Validate Reality Private Key
+            if (data.reality_private_key) {
+                if (!isValidBase64Key(data.reality_private_key, 32)) { // Reality private key is 32 bytes (256 bits)
+                    displayError("Invalid Reality Private Key format. It should be a 32-byte Base64 encoded string.");
+                    return;
+                }
+                inbound.tls.reality.private_key = data.reality_private_key;
+            }
+            if (data.reality_short_id) inbound.tls.reality.short_id = data.reality_short_id.split(',').map(s => s.trim());
+        }
+      }
+
+      // Transport settings
+      // Only include transport if Reality is NOT enabled, or if it's Hysteria2 (which has fixed UDP transport)
+      if (PROTOCOLS_WITH_TRANSPORT.includes(protocol) && data.transport_type && data.transport_type !== 'tcp' && !enableReality) {
+        inbound.transport = { type: data.transport_type };
+        if (data.transport_type === 'ws') {
+          if (data.ws_path) inbound.transport.path = data.ws_path;
+          if (data.ws_headers) {
+            try {
+              // Basic check for empty key/value, though full validation is complex
+              const headersObj = JSON.parse(data.ws_headers);
+              for (const key in headersObj) {
+                  if (Object.prototype.hasOwnProperty.call(headersObj, key)) {
+                      if (key.trim() === '' || typeof headersObj[key] !== 'string' || headersObj[key].trim() === '') {
+                          displayError("WebSocket Header keys and values must be non-empty strings. Please check the format.");
+                          return; // Stop form submission
+                      }
+                  }
+              }
+              inbound.transport.headers = headersObj;
+            } catch (e) {
+              displayError("Invalid JSON for WebSocket Headers. Please check the format. Error: " + e.message);
+              return; // Stop form submission
+            }
+          }
+        }
+      } else if (protocol === 'hysteria2') {
+         // Hysteria2 is always UDP based transport
+         inbound.transport = { type: "udp" };
+      }
+
+      // Protocol-specific settings
+      if (protocol === 'vless') {
+        // Validate UUID
+        if (!isValidUUID(data.uuid)) {
+            displayError("Invalid UUID format for VLESS. Please ensure it's a valid UUIDv4.");
+            return;
+        }
+        inbound.settings.users = [{ id: data.uuid }];
+        inbound.settings.decryption = data.vless_decryption;
+        if (data.vless_flow) inbound.settings.users[0].flow = data.vless_flow;
+      } else if (protocol === 'trojan') {
+        inbound.settings.users = [{ password: data.password }];
+        inbound.settings.fallback = [{ // Corrected fallback structure
+            "dest": 80
+        }];
+        // xver is typically handled by sniffiing rules or implicit to Sing-box behavior, removed from explicit fallback.
+      } else if (protocol.includes('shadowsocks')) {
+        inbound.settings.method = data.method;
+        inbound.settings.password = data.password;
+        if (data.network) inbound.settings.network = data.network;
+        inbound.settings.iv_check = data.iv_check === 'on';
+      } else if (protocol === 'wireguard') {
+        // Validate WireGuard Private Key
+        if (!isValidBase64Key(data.private_key, 32)) { // WG private key is 32 bytes
+            displayError("Invalid WireGuard Private Key format. It should be a 32-byte Base64 encoded string.");
+            return;
+        }
+        inbound.private_key = data.private_key;
+        
+        // Validate Listen IP
+        if (!isValidIpCidr(data.listen_ip)) {
+            displayError("Invalid Listen IP format. Please use a valid IP address with optional CIDR (e.g., 10.0.0.1/24).");
+            return;
+        }
+        inbound.listen_ip = [data.listen_ip];
+        if (data.peer_public_key) {
+            inbound.peers = [{
+                public_key: data.peer_public_key,
+                allowed_ips: data.peer_allowed_ips ? data.peer_allowed_ips.split(',').map(s => s.trim()) : []
+            }];
+        }
+        // inbound.settings is not used for WireGuard, correctly not initialized above
+      } else if (protocol === 'http') {
+        if (data.http_users) {
+            inbound.settings.users = data.http_users.split(',').map(user => {
+                const parts = user.split(':');
+                return { name: parts[0], password: parts[1] };
+            });
+        }
+      }
+
+      // Sniffing settings (now user configurable)
+      const sniffingEnabled = data.sniffing_enabled === 'on';
+      if (sniffingEnabled) {
+          const destOverrides = formData.getAll('dest_override'); // Get all checked dest_override values
+          inbound.sniffing = {
+              enabled: true,
+              dest_override: destOverrides,
+              metadata_only: data.metadata_only === 'on',
+              route_only: data.route_only === 'on'
+          };
+      } else {
+          inbound.sniffing = { enabled: false };
+      }
+
+
+      const config = {
+          log: {
+              level: "info"
+          },
+          inbounds: [inbound],
+          outbounds: [ // Basic outbounds needed for Sing-box to function
+              { "type": "direct", "tag": "direct" },
+              { "type": "block", "tag": "block" }
+          ]
+      };
+      output.value = JSON.stringify(config, null, 2);
+    });
+
+    document.getElementById('copy-btn').addEventListener('click', () => {
+      navigator.clipboard.writeText(output.value);
+      alert('Copied to clipboard!'); // Still using native alert for success message
+    });
+
+    document.getElementById('download-btn').addEventListener('click', () => {
+      const blob = new Blob([output.value], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'singbox-config.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
