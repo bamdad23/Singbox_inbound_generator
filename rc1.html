@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sing-box Inbound Config Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #330033;
+            color: white;
+        }
+        .form-section {
+            background-color: #330033;
+        }
+        input, textarea, select {
+            background-color: #001F3F !important;
+            color: #39FF14 !important;
+            border: 1px solid #666;
+            box-shadow: inset 1px 1px 2px #000, inset -1px -1px 2px #222;
+        }
+        select, button {
+            background: linear-gradient(to bottom, #ccc, #888) !important;
+            color: #000 !important;
+            border: 1px solid #666;
+            box-shadow: 2px 2px 6px #111;
+        }
+        button:hover {
+            filter: brightness(1.2);
+        }
+        .text-gray-600 {
+            color: #bbb !important;
+        }
+        .bg-gray-200, .bg-gray-300, .bg-gray-50 {
+            background-color: #001F3F !important;
+            color: #39FF14 !important;
+        }
+        .border-gray-300, .border-gray-400 {
+            border-color: #555 !important;
+        }
+        label {
+            color: white !important;
+        }
+        .tooltip .tooltiptext {
+            background-color: #111;
+            color: #39FF14;
+            border: 1px solid #39FF14;
+        }
+        textarea#jsonPreview {
+            background-color: #001F3F !important;
+            color: #39FF14 !important;
+            border: 1px solid #39FF14 !important;
+        }
+        button[type="button"] {
+            background: linear-gradient(to bottom, #ddd, #999) !important;
+            color: #000 !important;
+            border: 1px solid #666;
+            box-shadow: 2px 2px 6px #111;
+        }
+        button[type="button"]:hover {
+            background: linear-gradient(to bottom, #fff, #aaa) !important;
+        }
+    </style>
+</head>
+<body class="p-6">
+    <div class="max-w-3xl mx-auto p-6 rounded-lg shadow-md form-section">
+        <h1 class="text-2xl font-bold mb-4 text-center">Sing-box Inbound Config Generator</h1>
+                <form id="configForm" class="space-y-4">
+            <div>
+                <label for="protocol" class="block text-sm font-medium text-white">Protocol</label>
+                <select id="protocol" name="protocol" class="mt-1 block w-full bg-gray-300 border-gray-400 rounded-md shadow-md">
+                    <option value="vless">VLESS</option>
+                    <option value="vmess">VMess</option>
+                    <option value="trojan">Trojan</option>
+                    <option value="shadowsocks">Shadowsocks</option>
+                    <option value="hysteria2">Hysteria2</option>
+                    <option value="tuic">TUIC</option>
+                </select>
+            </div>
+
+            <div class="tooltip">
+                <label for="listen" class="block text-sm font-medium text-white">Listen Address</label>
+                <input type="text" id="listen" name="listen" value="0.0.0.0" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm" required>
+                <span class="tooltiptext">IP address the server listens on (default: 0.0.0.0 for all interfaces)</span>
+            </div>
+
+            <div class="tooltip">
+                <label for="port" class="block text-sm font-medium text-white">Port</label>
+                <input type="number" id="port" name="port" value="443" min="1" max="65535" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm" required>
+                <span class="tooltiptext">Server port (1-65535, default: 443 for TLS)</span>
+            </div>
+
+            <div id="userIdField" class="tooltip">
+                <label for="userId" class="block text-sm font-medium text-white">User ID (UUID) or Password</label>
+                <div class="flex space-x-2">
+                    <input type="text" id="userId" name="userId" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm" required>
+                    <button type="button" id="generateUUID" onclick="createUUID()" class="mt-1 bg-gray-200 text-gray-700 py-1 px-2 rounded-md">Generate</button>
+                </div>
+                <span class="tooltiptext">User ID (UUID for VLESS, VMess, TUIC) or Password (Trojan, Shadowsocks, Hysteria2)</span>
+            </div>
+
+            <div id="ssMethodField" class="hidden">
+                <label for="ssMethod" class="block text-sm font-medium text-white">Encryption Method</label>
+                <select id="ssMethod" name="ssMethod" class="mt-1 block w-full bg-gray-300 border-gray-400 rounded-md shadow-md">
+                    <option value="aes-256-gcm">AES-256-GCM</option>
+                    <option value="aes-128-gcm">AES-128-GCM</option>
+                    <option value="chacha20-poly1305">ChaCha20-Poly1305</option>
+                </select>
+            </div>
+
+            <div id="flowField" class="hidden">
+                <label for="flow" class="block text-sm font-medium text-white">Flow</label>
+                <select id="flow" name="flow" class="mt-1 block w-full bg-gray-300 border-gray-400 rounded-md shadow-md">
+                    <option value="">None</option>
+                    <option value="xtls-rprx-vision">xtls-rprx-vision</option>
+                    <option value="xtls-rprx-direct">xtls-rprx-direct</option>
+                </select>
+            </div>
+
+            <div id="tlsSection">
+                <div>
+                    <label for="tlsType" class="block text-sm font-medium text-white">TLS Type</label>
+                    <select id="tlsType" name="tlsType" class="mt-1 block w-full bg-gray-300 border-gray-400 rounded-md shadow-md">
+                        <option value="none">None</option>
+                        <option value="tls">TLS</option>
+                        <option value="reality">Reality</option>
+                    </select>
+                </div>
+
+                <div id="serverNameField" class="hidden tooltip">
+                    <label for="serverName" class="block text-sm font-medium text-white">Server Name (SNI / Decoy Domain)</label>
+                    <input type="text" id="serverName" name="serverName" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                    <span class="tooltiptext">Valid domain for TLS SNI or Reality decoy domain (e.g., www.example.com)</span>
+                </div>
+
+                <div id="realityFields" class="hidden">
+                    <div class="tooltip">
+                        <label for="realityPublicKey" class="block text-sm font-medium text-white">Reality Public Key (for reference only)</label>
+                        <div class="flex space-x-2">
+                            <input type="text" id="realityPublicKey" name="realityPublicKey" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm" readonly>
+                            <button type="button" onclick="createRealityKeys()" class="mt-1 bg-gray-200 text-gray-700 py-1 px-2 rounded-md">Generate</button>
+                        </div>
+                        <span class="tooltiptext">This is your Reality public key (usually generated by a tool like Xray or sing-box gen). Used by clients.</span>
+                    </div>
+                    <div class="tooltip">
+                        <label for="realityPrivateKey" class="block text-sm font-medium text-white">Reality Private Key</label>
+                        <input type="text" id="realityPrivateKey" name="realityPrivateKey" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                        <span class="tooltiptext">Your Reality private key. Only required for inbound.</span>
+                    </div>
+                    <div class="tooltip">
+                        <label for="realityShortId" class="block text-sm font-medium text-white">Reality Short ID (8-char hex)</label>
+                        <input type="text" id="realityShortId" name="realityShortId" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                        <span class="tooltiptext">Short ID for Reality (8-character hexadecimal string, e.g., 1234abcd). Can be multiple, but form supports one.</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="transportField">
+                <label for="transportType" class="block text-sm font-medium text-white">Transport Type</label>
+                <select id="transportType" name="transportType" class="mt-1 block w-full bg-gray-300 border-gray-400 rounded-md shadow-md">
+                    <option value="none">None</option>
+                    <option value="http">HTTP</option>
+                    <option value="websocket">WebSocket</option>
+                    <option value="grpc">gRPC</option>
+                    <option value="httpupgrade">HTTPUpgrade</option>
+                </select>
+            </div>
+
+            <div id="transportPathField" class="hidden tooltip">
+                <label for="transportPath" class="block text-sm font-medium text-white">Path</label>
+                <input type="text" id="transportPath" name="transportPath" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                <span class="tooltiptext">Path for transport (e.g., /path)</span>
+            </div>
+
+            <div id="transportHostField" class="hidden tooltip">
+                <label for="transportHost" class="block text-sm font-medium text-white">Host</label>
+                <input type="text" id="transportHost" name="transportHost" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                <span class="tooltiptext">Host for transport (e.g., example.com). For WebSocket headers, usually 'Host'.</span>
+            </div>
+
+            <div id="grpcServiceNameField" class="hidden tooltip">
+                <label for="grpcServiceName" class="block text-sm font-medium text-white">gRPC Service Name</label>
+                <input type="text" id="grpcServiceName" name="grpcServiceName" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                <span class="tooltiptext">Service name for gRPC</span>
+            </div>
+
+            <div id="obfsField" class="hidden">
+                <label for="obfs" class="block text-sm font-medium text-white">Obfs Type (Salamander is default)</label>
+                <input type="text" id="obfs" name="obfs" value="salamander" readonly class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+            </div>
+            <div id="obfsPasswordField" class="hidden">
+                <label for="obfsPassword" class="block text-sm font-medium text-white">Obfs Password</label>
+                <div class="flex space-x-2">
+                    <input type="text" id="obfsPassword" name="obfsPassword" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                    <button type="button" onclick="createObfsPassword()" class="mt-1 bg-gray-200 text-gray-700 py-1 px-2 rounded-md">Generate</button>
+                </div>
+            </div>
+
+            <div id="multiplexField">
+                <label class="block text-sm font-medium text-white">Multiplex</label>
+                <div class="mt-1">
+                    <input type="checkbox" id="multiplexEnabled" name="multiplexEnabled" class="mr-2">
+                    <label for="multiplexEnabled" class="text-sm text-gray-600">Enable Multiplex</label>
+                </div>
+                <div id="multiplexOptions" class="hidden mt-2 space-y-2">
+                    <div class="tooltip">
+                        <label for="maxConnections" class="block text-sm font-medium text-white">Max Connections</label>
+                        <input type="number" id="maxConnections" name="maxConnections" value="10" min="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                        <span class="tooltiptext">Maximum simultaneous connections for multiplex</span>
+                    </div>
+                    <div class="tooltip">
+                        <label for="minStreams" class="block text-sm font-medium text-white">Min Streams</label>
+                        <input type="number" id="minStreams" name="minStreams" value="2" min="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                        <span class="tooltiptext">Minimum number of streams for multiplex</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tuicCongestionField" class="hidden">
+                <label for="congestionControl" class="block text-sm font-medium text-white">Congestion Control</label>
+                <select id="congestionControl" name="congestionControl" class="mt-1 block w-full bg-gray-300 border-gray-400 rounded-md shadow-md">
+                    <option value="bbr">BBR</option>
+                    <option value="cubic">Cubic</option>
+                    <option value="new_reno">New Reno</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-white">Sniffing</label>
+                <div class="mt-1">
+                    <input type="checkbox" id="sniff" name="sniff" class="mr-2" checked>
+                    <label for="sniff" class="text-sm text-gray-600">Enable Sniffing</label>
+                </div>
+                <div class="mt-1">
+                    <input type="checkbox" id="sniffOverride" name="sniffOverride" class="mr-2" checked>
+                    <label for="sniffOverride" class="text-sm text-gray-600">Override Destination Sniffing</label>
+                </div>
+            </div>
+
+            <div>
+                <label for="jsonPreview" class="block text-sm font-medium text-white">JSON Preview</label>
+                <textarea id="jsonPreview" readonly class="w-full h-40 mt-2 p-2 border rounded-md bg-gray-50"></textarea>
+            </div>
+
+            <button type="button" onclick="generateAndDownloadConfig()" class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700">Generate and Download Config</button>
+        </form>
+    </div>
+
+    <script>
+        // Generate Random String for Keys
+        function generateRandomString(length) {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let result = '';
+            for (let i = 0; i < length; i++) {
+                result += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return result;
+        }
+
+        // Generate Random Base64 String
+        function generateRandomBase64(length) {
+            const array = new Uint8Array(Math.ceil(length / 4) * 3); // Calculate bytes needed for desired base64 length
+            crypto.getRandomValues(array);
+            return btoa(String.fromCharCode(...array)).slice(0, length);
+        }
+
+        // Generate Random Hex String
+        function generateRandomHex(length) { // length in characters
+            const bytes = new Uint8Array(length / 2); // Each byte is 2 hex chars
+            crypto.getRandomValues(bytes);
+            return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // Create UUID (renamed from generateUUID to avoid conflict)
+        function createUUID() {
+            const userIdInput = document.getElementById('userId');
+            if (userIdInput) {
+                const uuid = crypto.randomUUID();
+                userIdInput.value = uuid;
+            }
+            updatePreview();
+        }
+
+        // Create Reality Keys (renamed from generateRealityKeys to avoid conflict)
+        function createRealityKeys() {
+            // Public key is for client, but showing here for consistency in generation
+            document.getElementById('realityPublicKey').value = generateRandomBase64(43); // 32-byte key base64 encoded ~43 chars
+            document.getElementById('realityPrivateKey').value = generateRandomBase64(43); // 32-byte key base64 encoded ~43 chars
+            document.getElementById('realityShortId').value = generateRandomHex(8); // 8-char hex
+            updatePreview();
+        }
+
+        // Create Obfs Password (renamed from generateObfsPassword to avoid conflict)
+        function createObfsPassword() {
+            document.getElementById('obfsPassword').value = generateRandomBase64(16); // Example length
+            updatePreview();
+        }
+
+        // Validate UUID
+        function validateUUID(uuid) {
+            const regex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+            return regex.test(uuid);
+        }
+
+        // Validate Domain
+        function validateDomain(domain) {
+            const regex = /^([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/;
+            return regex.test(domain);
+        }
+
+        // Update Form Visibility
+        function updateForm() {
+            const protocol = document.getElementById('protocol').value;
+            const tlsType = document.getElementById('tlsType').value;
+            const transportTypeSelect = document.getElementById('transportType'); // Get the select element
+            const currentTransportType = transportTypeSelect.value; // Get current value
+
+            // Show/Hide fields based on protocol and selections
+            document.getElementById('flowField').classList.toggle('hidden', protocol !== 'vless');
+            document.getElementById('ssMethodField').classList.toggle('hidden', protocol !== 'shadowsocks');
+            document.getElementById('obfsField').classList.toggle('hidden', protocol !== 'hysteria2');
+            document.getElementById('obfsPasswordField').classList.toggle('hidden', protocol !== 'hysteria2');
+            document.getElementById('tuicCongestionField').classList.toggle('hidden', protocol !== 'tuic');
+
+            // Handle TLS section visibility based on protocol
+            const tlsSection = document.getElementById('tlsSection');
+            const tlsSelect = document.getElementById('tlsType');
+            const realityOption = tlsSelect.querySelector('option[value="reality"]');
+
+            if (protocol === 'shadowsocks') {
+                tlsSection.classList.add('hidden');
+                tlsSelect.value = 'none'; // Force TLS to none if SS selected
+            } else {
+                tlsSection.classList.remove('hidden');
+                // Only enable Reality option if protocol is VLESS
+                realityOption.disabled = (protocol !== 'vless');
+                if (protocol !== 'vless' && tlsSelect.value === 'reality') {
+                    tlsSelect.value = 'none'; // If reality was selected for non-VLESS, reset it
+                }
+            }
+
+            // Show/Hide TLS sub-fields based on current tlsType (after potential reset above)
+            document.getElementById('serverNameField').classList.toggle('hidden', tlsSelect.value === 'none');
+            document.getElementById('realityFields').classList.toggle('hidden', tlsSelect.value !== 'reality');
+
+
+            // --- Transport Type visibility logic ---
+            const transportField = document.getElementById('transportField');
+            const isTransportIncompatibleWithProtocol = ['shadowsocks', 'hysteria2', 'tuic'].includes(protocol);
+            const isTransportIncompatibleWithReality = (tlsType === 'reality');
+
+            // If transport is incompatible with protocol OR reality, hide it
+            transportField.classList.toggle('hidden', isTransportIncompatibleWithProtocol || isTransportIncompatibleWithReality);
+
+            // If transport field is hidden, ensure its value is 'none' for correct JSON output
+            if (isTransportIncompatibleWithProtocol || isTransportIncompatibleWithReality) {
+                transportTypeSelect.value = 'none';
+            }
+
+            const isTransportNone = transportTypeSelect.value === 'none'; // Use the potentially updated value
+
+            document.getElementById('transportPathField').classList.toggle('hidden', isTransportNone || !['http', 'websocket', 'httpupgrade'].includes(currentTransportType));
+            document.getElementById('transportHostField').classList.toggle('hidden', isTransportNone || !['http', 'websocket', 'httpupgrade'].includes(currentTransportType));
+            document.getElementById('grpcServiceNameField').classList.toggle('hidden', isTransportNone || currentTransportType !== 'grpc');
+
+
+            document.getElementById('multiplexField').classList.toggle('hidden', !['vless', 'vmess'].includes(protocol));
+
+            // Update User ID label based on protocol
+            const userIdLabel = document.querySelector('label[for="userId"]');
+            userIdLabel.textContent = ['shadowsocks', 'trojan', 'hysteria2'].includes(protocol) ? 'Password' : 'User ID (UUID)';
+
+            // Show/Hide Generate UUID button
+            document.getElementById('generateUUID').classList.toggle('hidden', ['shadowsocks', 'trojan', 'hysteria2'].includes(protocol));
+        }
+
+        // Update JSON Preview
+        function updatePreview() {
+            try {
+                const config = generateConfig();
+                document.getElementById('jsonPreview').value = JSON.stringify(config, null, 2);
+            } catch (e) {
+                document.getElementById('jsonPreview').value = 'Error generating JSON: ' + e.message;
+            }
+        }
+
+        // Generate Config JSON
+        function generateConfig() {
+            const protocol = document.getElementById('protocol').value;
+            const listen = document.getElementById('listen').value;
+            const port = parseInt(document.getElementById('port').value);
+            const userId = document.getElementById('userId').value;
+            const tlsType = document.getElementById('tlsType').value;
+            const transportType = document.getElementById('transportType').value; // Get raw value
+            const sniff = document.getElementById('sniff').checked;
+            const sniffOverride = document.getElementById('sniffOverride').checked;
+
+            // Input validation
+            if (!port || port < 1 || port > 65535) {
+                throw new Error('Port must be between 1 and 65535.');
+            }
+            if (!userId) {
+                throw new Error('User ID or Password is required.');
+            }
+            if (['vless', 'vmess', 'tuic'].includes(protocol) && !validateUUID(userId)) {
+                throw new Error('User ID must be a valid UUID for VLESS, VMess, or TUIC.');
+            }
+            if (tlsType !== 'none' && document.getElementById('serverName').value && !validateDomain(document.getElementById('serverName').value)) {
+                throw new Error('Server Name must be a valid domain.');
+            }
+            if (protocol === 'shadowsocks' && tlsType !== 'none') { // Ensure TLS is not enabled for SS
+                throw new Error('TLS is not supported for Shadowsocks inbound in this configuration.');
+            }
+            // Additional validation for Reality and transport conflicts (handled by updateForm for visibility)
+            if (tlsType === 'reality' && transportType !== 'none') {
+                throw new Error('Reality TLS is incompatible with explicit transport types like WebSocket, HTTP, or gRPC. Please select "None" for Transport Type.');
+            }
+
+
+            const config = {
+                type: protocol,
+                tag: `${protocol}-in`,
+                listen: listen,
+                listen_port: port,
+                sniff: sniff,
+                sniff_override_destination: sniffOverride
+            };
+
+            // User settings
+            if (protocol === 'shadowsocks') {
+                config.users = [{
+                    password: userId,
+                    method: document.getElementById('ssMethod').value
+                }];
+            } else if (protocol === 'trojan' || protocol === 'hysteria2') {
+                config.users = [{
+                    password: userId
+                }];
+            } else if (protocol === 'tuic') {
+                config.users = [{
+                    uuid: userId,
+                    password: userId // TUIC uses same value for UUID and password
+                }];
+                config.congestion_control = document.getElementById('congestionControl').value;
+            } else {
+                config.users = [{
+                    uuid: userId
+                }];
+                if (protocol === 'vless') {
+                    const flow = document.getElementById('flow').value;
+                    if (flow) config.users[0].flow = flow;
+                }
+            }
+
+            // TLS settings
+            if (tlsType !== 'none' && protocol !== 'shadowsocks') { // Ensure no TLS for Shadowsocks
+                config.tls = {
+                    enabled: true
+                    // server_name is handled below for Reality, otherwise will be here if simple TLS
+                };
+                if (tlsType === 'tls') {
+                     const serverName = document.getElementById('serverName').value;
+                     if (!serverName) {
+                         throw new Error('Server Name is required for TLS.');
+                     }
+                     config.tls.server_name = serverName;
+                } else if (tlsType === 'reality') {
+                    const realityPrivateKey = document.getElementById('realityPrivateKey').value;
+                    const realityShortId = document.getElementById('realityShortId').value;
+                    const serverName = document.getElementById('serverName').value; // For decoy domain
+
+                    if (!realityPrivateKey) {
+                        throw new Error('Reality Private Key is required for Reality TLS.');
+                    }
+                    if (!serverName) {
+                        throw new Error('Server Name (Decoy Domain) is required for Reality TLS.');
+                    }
+                    if (!realityShortId || realityShortId.length !== 8 || !/^[0-9a-fA-F]{8}$/.test(realityShortId)) {
+                        throw new Error('Reality Short ID must be an 8-character hexadecimal string.');
+                    }
+
+                    config.tls.reality = {
+                        enabled: true,
+                        private_key: realityPrivateKey,
+                        server_names: [serverName], // Decoy domain from serverName input, as array
+                        short_id: [realityShortId] // Convert to array
+                        // xver and handshake are missing for simplicity.
+                    };
+                    // Explicitly remove server_name from main tls if reality is enabled, as it's within reality.server_names
+                    // This is done by not setting it for reality in the initial tls object
+                }
+            }
+
+            // Transport settings (not for Shadowsocks, Hysteria2, TUIC, or Reality)
+            const isExplicitTransportAllowed = !(
+                ['shadowsocks', 'hysteria2', 'tuic'].includes(protocol) ||
+                tlsType === 'reality'
+            );
+
+            if (isExplicitTransportAllowed && transportType !== 'none') {
+                config.transport = { type: transportType };
+                if (['http', 'websocket', 'httpupgrade'].includes(transportType)) {
+                    const transportPath = document.getElementById('transportPath').value;
+                    const transportHost = document.getElementById('transportHost').value;
+                    if (!transportPath) throw new Error('Path is required for HTTP/WebSocket/HTTPUpgrade transport.');
+                    if (!transportHost) throw new Error('Host is required for HTTP/WebSocket/HTTPUpgrade transport.');
+                    config.transport.path = transportPath;
+                    config.transport.host = transportHost;
+                } else if (transportType === 'grpc') {
+                    const grpcServiceName = document.getElementById('grpcServiceName').value;
+                    if (!grpcServiceName) throw new Error('gRPC Service Name is required for gRPC transport.');
+                    config.transport.service_name = grpcServiceName;
+                }
+            }
+
+            // Obfs for Hysteria2
+            if (protocol === 'hysteria2') {
+                const obfsPassword = document.getElementById('obfsPassword').value;
+                if (obfsPassword) { // Obfs is optional based on password presence
+                    config.obfs = { type: 'salamander', password: obfsPassword };
+                }
+            }
+
+            // Multiplex settings
+            if (['vless', 'vmess'].includes(protocol) && document.getElementById('multiplexEnabled').checked) {
+                config.multiplex = {
+                    enabled: true,
+                    max_connections: parseInt(document.getElementById('maxConnections').value) || 10,
+                    min_streams: parseInt(document.getElementById('minStreams').value) || 2
+                };
+            }
+
+            return config;
+        }
+
+        // Generate and Download Config
+        function generateAndDownloadConfig() {
+            try {
+                const config = generateConfig();
+                const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'inbound.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        // Event Listeners
+        document.getElementById('protocol').addEventListener('change', () => { updateForm(); updatePreview(); });
+        document.getElementById('tlsType').addEventListener('change', () => { updateForm(); updatePreview(); });
+        document.getElementById('transportType').addEventListener('change', () => { updateForm(); updatePreview(); });
+        document.getElementById('multiplexEnabled').addEventListener('change', () => {
+            document.getElementById('multiplexOptions').classList.toggle('hidden', !document.getElementById('multiplexEnabled').checked);
+            updatePreview();
+        });
+        document.getElementById('configForm').addEventListener('input', updatePreview);
+
+        // Initial Form and Preview Update
+        updateForm();
+        updatePreview();
+    </script>
+</body>
+</html>
